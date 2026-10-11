@@ -222,12 +222,19 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                     if sideData.type == AV_PKT_DATA_DOVI_CONF {
                         let expect = MemoryLayout<DOVIDecoderConfigurationRecord>.size
                         guard let sdData = sideData.data, sideData.size == expect else { continue }
-                        var rec = DOVIDecoderConfigurationRecord()
-                        withUnsafeMutableBytes(of: &rec) { dst in
-                            guard let out = dst.bindMemory(to: UInt8.self).baseAddress else { return }
-                            for k in 0 ..< expect { out[k] = sdData[k] }
-                        }
-                        dovi = rec
+                        // [NewTV4] 复制到**对齐的自有内存**再解析，不直接解引用可能已失效的
+                        // 原缓冲。注意：DOVIDecoderConfigurationRecord 是导入的 C 结构体，
+                        // Swift 只给了 8 参数的 memberwise init（没有无参 init），
+                        // 所以不能 `DOVIDecoderConfigurationRecord()` 构造，
+                        // 改为裸内存 load(as:)（按该类型 alignment 分配，避免未对齐读）。
+                        let buf = UnsafeMutableRawPointer.allocate(
+                            byteCount: expect,
+                            alignment: MemoryLayout<DOVIDecoderConfigurationRecord>.alignment
+                        )
+                        defer { buf.deallocate() }
+                        let out = buf.bindMemory(to: UInt8.self, capacity: expect)
+                        for k in 0 ..< expect { out[k] = sdData[k] }
+                        dovi = buf.load(as: DOVIDecoderConfigurationRecord.self)
                     } else if sideData.type == AV_PKT_DATA_DISPLAYMATRIX {
                         // av_display_rotation_get 固定读 9 个 Int32 = 36 字节
                         let expect = MemoryLayout<Int32>.size * 9
