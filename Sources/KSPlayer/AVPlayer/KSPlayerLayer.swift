@@ -317,6 +317,12 @@ open class KSPlayerLayer: NSObject {
 
     public func stop() {
         KSLog("stop Player")
+        // [NewTV6] 先同步暂停再 shutdown：pause → playbackState=.paused →
+        // playOrPause → audioOutput.pause()（AVAudioEngine 立即静音）。
+        // shutdown 的 closeOperation 是**异步排队**的（track shutdown + NewTV3
+        // join 每轨最多等 2s），期间音频引擎若不先暂停会继续出声 —— 表现为
+        // 退出播放页/切走后「声音还在放」。
+        player.pause()
         state = .initialized
         player.shutdown()
         bufferedCount = 0
