@@ -203,7 +203,17 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         } else if codecpar.codec_type == AVMEDIA_TYPE_VIDEO {
             audioDescriptor = nil
             mediaType = .video
-            if codecpar.nb_coded_side_data > 0, let sideDatas = codecpar.coded_side_data {
+            // [NewTV5] 【安全优先：默认关闭 side-data 解析】
+            // 这段读的 AVPacketSideData 数组/指针来自 FFmpeg 的流对象，直播流下会被
+            // 污染；我们连做了三轮防御（尺寸精确匹配 + 解析前复制到自有内存）后，
+            // 仍然持续崩在本函数（符号内偏移 +920 → +1256 → +1116，崩点始终在
+            // KSPlayer_MEPlayerItem_open 线程的 FFmpegAssetTrack.init(codecpar:)）：
+            // 说明「只要碰这块内存就有概率野读」——字段校验通过、真去读的那一刻，
+            // 内存已被拆流线程释放/改写（PAC failure 的 0x0000EB33… 就是这么来的）。
+            // 权衡：rotation（画面旋转）与 Dolby Vision 元数据都是锦上添花，直播场景
+            // 几乎用不到 —— 整段关掉，换取不闪退。要恢复把下面常量改 true 即可。
+            let newtvParseSideData = false
+            if newtvParseSideData, codecpar.nb_coded_side_data > 0, let sideDatas = codecpar.coded_side_data {
                 // [NewTV] 真实流 side data 条目个位数；count 被拆流中途污染成
                 // 天文数字时，照它遍历会沿数组越界扫整个堆。钳到 8 保底。
                 let sideCount = min(Int(codecpar.nb_coded_side_data), 8)
